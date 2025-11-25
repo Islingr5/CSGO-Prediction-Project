@@ -4,6 +4,4 @@ matplotlib
 xgboost
 scikit-learn
 joblib
-cloudscraper
-beautifulsoup4
 requests
