@@ -43,6 +43,7 @@ This script loads all raw data, generates features, trains the model on the full
 
 ```bash
 python run.py
+```
 
 ## 💻 Usage & Execution
 
@@ -52,7 +53,7 @@ After the model file (`csgo_v11_model.pkl`) is generated, you can use the built-
 
 * **Execution:** Loads the saved model instantly for predictions.
     ```bash
-    python run.py
+    python demo.py
     ```
 
 **Interactive Commands:**
