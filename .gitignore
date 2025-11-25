@@ -1,0 +1,16 @@
+# Python çöp dosyaları
+__pycache__/
+*.pyc
+
+# Sanal Ortamlar (KESİNLİKLE GİTMEMELİ)
+venv/
+myenv/
+env/
+.env
+
+# Editör dosyaları
+.vscode/
+.idea/
+
+# Eğer 100MB'tan büyük CSV varsa onları da buraya yazmalısın
+# Ama hocaya göstereceksen CSV'ler lazım, dursun şimdilik.
