@@ -20,7 +20,7 @@
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/Islingr5/CSGO-Prediction-Project.git](https://github.com/Islingr5/CSGO-Prediction-Project.git)
+    git clone http://github.com/Islingr5/CSGO-Prediction-Project.git
     cd CSGO-Prediction-Project
     ```
     *(Note: This repository tracks large binary files using Git LFS. Ensure you have Git LFS installed to fetch the model and datasets.)*
