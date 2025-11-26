@@ -29,13 +29,14 @@
     ```bash
     pip install -r requirements.txt
     ```
+    *(Note: I suggest you to use Python's virtual environment "venv" for pip usage in linux systems.)*
 
 3.  **Authentication Check:**
     Ensure you have correctly configured your Git Personal Access Token (PAT) for push operations.
 
 ## 💻 Usage & Execution
 
-The project requires an initial training run to process all historical data and save the final model (`csgo_final_model.pkl`).
+The project requires an initial training run to process all historical data and save the final model (`csgo_v11_model.pkl`).
 
 ### 1. Initial Training & Model Generation (Run Once)
 
