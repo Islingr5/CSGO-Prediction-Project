@@ -7,9 +7,12 @@ from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import accuracy_score, classification_report, roc_curve, auc
 from sklearn.model_selection import TimeSeriesSplit
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.pipeline import make_pipeline
+from sklearn.ensemble import StackingClassifier
+
 import joblib
 import warnings
 import sys
@@ -231,10 +234,10 @@ models_config = {
     # --- BASELINE MODELS ---
     "Logistic Regression": LogisticRegression(solver='saga', max_iter=1000, random_state=42),
     "Naive Bayes": GaussianNB(),
+    #"Polynomial Logistic Reg": make_pipeline( PolynomialFeatures(degree=2), LogisticRegression(solver='saga', max_iter=1000, random_state=42)),
 
-    # --- DISTANCE & NEURAL NETWORKS ---
+    # --- DISTANCE BASED ---
     "KNN (5-Neighbors)": KNeighborsClassifier(n_neighbors=5, n_jobs=-1),
-    "Neural Network (MLP)": MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=500, random_state=42),
 
     # --- TREE BASED ---
     "Random Forest": RandomForestClassifier(
@@ -275,6 +278,28 @@ for name, model in models_config.items():
         print(f"    [ERROR] {name} failed. Reason: {e}")
 
 # --- 3. VOTING CLASSIFIER (ENSEMBLE) ---
+print(" -> Creating: Stacking Model (Hybrid Model)...")
+estimators = [
+    ('rf', trained_models['Random Forest']),
+    ('nb', trained_models['Naive Bayes']),
+    ('lr', trained_models['Logistic Regression']),
+    ('knn', trained_models['KNN (5-Neighbors)']),
+    ('xgb', trained_models['XGBoost']),
+    ('lgbm', trained_models['LightGBM']),
+
+]
+stacking_model = StackingClassifier(
+    estimators=estimators, 
+    final_estimator=LogisticRegression(),
+    passthrough=False 
+)
+stacking_model.fit(train[cols], y_train)
+s_preds = stacking_model.predict(test[cols])
+s_acc = accuracy_score(y_test, s_preds)
+
+results.append({"Model": "Stacking", "Accuracy": s_acc})
+trained_models["Stacking"] = stacking_model
+
 if "XGBoost" in trained_models and "Random Forest" in trained_models:
     print(" -> Creating: Voting Ensemble (Hybrid Model)...")
 
@@ -282,9 +307,6 @@ if "XGBoost" in trained_models and "Random Forest" in trained_models:
         ('xgb', trained_models['XGBoost']),
         ('rf', trained_models['Random Forest'])
     ]
-
-    if "Neural Network (MLP)" in trained_models:
-        voting_estimators.append(('mlp', trained_models['Neural Network (MLP)']))
 
     voting_clf = VotingClassifier(estimators=voting_estimators, voting='soft')
     voting_clf.fit(train[cols], y_train)
@@ -294,6 +316,7 @@ if "XGBoost" in trained_models and "Random Forest" in trained_models:
 
     results.append({"Model": "Voting Ensemble (Hybrid)", "Accuracy": v_acc})
     trained_models["Voting Ensemble"] = voting_clf
+
 
 # --- 4. COMPARISON OUTPUT ---
 df_benchmark = pd.DataFrame(results).sort_values(by="Accuracy", ascending=False)
