@@ -7,7 +7,7 @@ from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import accuracy_score, classification_report, roc_curve, auc
+from sklearn.metrics import accuracy_score, classification_report, roc_curve, auc, precision_score, recall_score, f1_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import make_pipeline
@@ -23,7 +23,7 @@ import sys
 warnings.simplefilter(action='ignore')
 pd.options.mode.chained_assignment = None
 
-print(" [SYSTEM] CS:GO PREDICTOR V12 (BENCHMARK EDITION) STARTING...")
+print(" [SYSTEM] CS:GO PREDICTOR V13 (SCIENTIFIC EDITION) STARTING...")
 
 # =============================================================================
 # 1. DATA LOADING
@@ -184,13 +184,15 @@ df = pd.get_dummies(df, columns=['_map'], prefix='map')
 df.columns = df.columns.str.lower()
 
 # =============================================================================
-# 3. MODEL TRAINING & BENCHMARKING
+# 3. MODEL TRAINING & BENCHMARKING (V13 - SCIENTIFIC EDITION)
 # =============================================================================
+from sklearn.metrics import accuracy_score, classification_report, roc_curve, auc, precision_score, recall_score, f1_score, log_loss, confusion_matrix, ConfusionMatrixDisplay
+from sklearn.calibration import calibration_curve
+
 print(" [FIX] Applying Data Mirroring (Augmentation)...")
 # Splitting data by date
 train_raw = df[df['date'] < '2019-01-01']
 test = df[df['date'] >= '2019-01-01']
-
 
 # Function to mirror data (T1 vs T2 -> T2 vs T1) to remove positional bias
 def mirror_data(data):
@@ -208,7 +210,6 @@ def mirror_data(data):
     mirrored['match_winner'] = mirrored['match_winner'].apply(lambda x: 2 if x == 1 else 1)
     return mirrored
 
-
 train_mirror = mirror_data(train_raw)
 train = pd.concat([train_raw, train_mirror], ignore_index=True)
 
@@ -220,39 +221,28 @@ y_test = test[target].apply(lambda x: 0 if x == 1 else 1)
 cols = ['t1_elo', 't2_elo', 'elo_d', 'rank_1', 'rank_2', 'rank_d',
         't1_wr', 't2_wr', 'wr_d', 't1_p', 't2_p', 'perf_d',
         't1_pis', 't2_pis', 'pis_d', 'elo_x_wr', 'rank_x_perf']
-# Include maps but exclude leakage columns like 'win'
 map_cols = [c for c in df.columns if c.startswith('map_') and 'win' not in c and 'result' not in c]
 cols += map_cols
 
-# Prepare clean list of map names for display
 display_maps = sorted([c.replace('map_', '').title() for c in map_cols])
 
 print(f" [TRAIN] Training Multiple Models for Benchmarking...")
 
 # --- 1. MODEL DEFINITIONS ---
 models_config = {
-    # --- BASELINE MODELS ---
     "Logistic Regression": LogisticRegression(solver='saga', max_iter=1000, random_state=42),
     "Naive Bayes": GaussianNB(),
-    #"Polynomial Logistic Reg": make_pipeline( PolynomialFeatures(degree=2), LogisticRegression(solver='saga', max_iter=1000, random_state=42)),
-
-    # --- DISTANCE BASED ---
     "KNN (5-Neighbors)": KNeighborsClassifier(n_neighbors=5, n_jobs=-1),
-
-    # --- TREE BASED ---
     "Random Forest": RandomForestClassifier(
         n_estimators=1000, max_depth=10, max_samples=0.8,
         max_features=0.7, n_jobs=-1, random_state=42
     ),
-
-    # --- BOOSTING ---
     "XGBoost": xgb.XGBClassifier(
         n_estimators=2000, learning_rate=0.01, max_depth=6,
         subsample=0.8, colsample_bytree=0.7, gamma=0.5,
-        tree_method='hist', device='cuda', random_state=42, eval_metric='error'
+        tree_method='hist', device='cuda', random_state=42, eval_metric='logloss'
         # if no GPU: device='cpu'
     ),
-
     "LightGBM": lgb.LGBMClassifier(
         n_estimators=2000, learning_rate=0.01, max_depth=6,
         device='gpu', random_state=42, verbose=-1
@@ -269,9 +259,23 @@ for name, model in models_config.items():
     try:
         model.fit(train[cols], y_train)
         preds = model.predict(test[cols])
-        acc = accuracy_score(y_test, preds)
+        
+        # Olasılık Tahmini (Varsa)
+        if hasattr(model, "predict_proba"):
+            probs = model.predict_proba(test[cols])[:, 1]
+            ll = log_loss(y_test, probs)
+        else:
+            ll = np.nan # KNN gibi bazı modellerde direkt proba olmayabilir
 
-        results.append({"Model": name, "Accuracy": acc})
+        # METRICS CALCULATION
+        results.append({
+            "Model": name, 
+            "Accuracy": accuracy_score(y_test, preds),
+            "Precision": precision_score(y_test, preds, zero_division=0),
+            "Recall": recall_score(y_test, preds, zero_division=0),
+            "F1-Score": f1_score(y_test, preds, zero_division=0),
+            "Log Loss": ll
+        })
         trained_models[name] = model
 
     except Exception as e:
@@ -280,80 +284,100 @@ for name, model in models_config.items():
 # --- 3. VOTING CLASSIFIER (ENSEMBLE) ---
 print(" -> Creating: Stacking Model (Hybrid Model)...")
 estimators = [
-    ('rf', trained_models['Random Forest']),
-    ('nb', trained_models['Naive Bayes']),
-    ('lr', trained_models['Logistic Regression']),
-    ('knn', trained_models['KNN (5-Neighbors)']),
-    ('xgb', trained_models['XGBoost']),
-    ('lgbm', trained_models['LightGBM']),
-
+    ('rf', trained_models.get('Random Forest')),
+    ('nb', trained_models.get('Naive Bayes')),
+    ('lr', trained_models.get('Logistic Regression')),
+    ('xgb', trained_models.get('XGBoost')),
+    ('lgbm', trained_models.get('LightGBM')),
 ]
-stacking_model = StackingClassifier(
-    estimators=estimators, 
-    final_estimator=LogisticRegression(),
-    passthrough=False 
-)
-stacking_model.fit(train[cols], y_train)
-s_preds = stacking_model.predict(test[cols])
-s_acc = accuracy_score(y_test, s_preds)
+estimators = [e for e in estimators if e[1] is not None]
 
-results.append({"Model": "Stacking", "Accuracy": s_acc})
-trained_models["Stacking"] = stacking_model
-
-if "XGBoost" in trained_models and "Random Forest" in trained_models:
-    print(" -> Creating: Voting Ensemble (Hybrid Model)...")
-
-    voting_estimators = [
-        ('xgb', trained_models['XGBoost']),
-        ('rf', trained_models['Random Forest'])
-    ]
-
-    voting_clf = VotingClassifier(estimators=voting_estimators, voting='soft')
-    voting_clf.fit(train[cols], y_train)
-
-    v_preds = voting_clf.predict(test[cols])
-    v_acc = accuracy_score(y_test, v_preds)
-
-    results.append({"Model": "Voting Ensemble (Hybrid)", "Accuracy": v_acc})
-    trained_models["Voting Ensemble"] = voting_clf
-
+if estimators:
+    stacking_model = StackingClassifier(
+        estimators=estimators, 
+        final_estimator=LogisticRegression(),
+        passthrough=False,
+        n_jobs=-1
+    )
+    stacking_model.fit(train[cols], y_train)
+    s_preds = stacking_model.predict(test[cols])
+    s_probs = stacking_model.predict_proba(test[cols])[:, 1]
+    
+    results.append({
+        "Model": "Stacking", 
+        "Accuracy": accuracy_score(y_test, s_preds),
+        "Precision": precision_score(y_test, s_preds, zero_division=0),
+        "Recall": recall_score(y_test, s_preds, zero_division=0),
+        "F1-Score": f1_score(y_test, s_preds, zero_division=0),
+        "Log Loss": log_loss(y_test, s_probs)
+    })
+    trained_models["Stacking"] = stacking_model
 
 # --- 4. COMPARISON OUTPUT ---
 df_benchmark = pd.DataFrame(results).sort_values(by="Accuracy", ascending=False)
 
-print("\n" + "=" * 50)
-print(" 📊 MODEL COMPARISON RESULTS")
-print("=" * 50)
-print(df_benchmark[['Model', 'Accuracy']].to_string(index=False, formatters={'Accuracy': '{:.2%}'.format}))
-print("=" * 50 + "\n")
+print("\n" + "=" * 100)
+print(" 📊 MODEL COMPARISON RESULTS (SCIENTIFIC)")
+print("=" * 100)
+print(df_benchmark[['Model', 'Accuracy', 'Precision', 'Recall', 'F1-Score', 'Log Loss']].to_string(index=False, formatters={
+    'Accuracy': '{:.2%}'.format,
+    'Precision': '{:.2%}'.format,
+    'Recall': '{:.2%}'.format,
+    'F1-Score': '{:.2%}'.format,
+    'Log Loss': '{:.4f}'.format
+}))
+print("=" * 100 + "\n")
 
 # AUTO-SELECT BEST MODEL
 best_model_name = df_benchmark.iloc[0]['Model']
 print(f" [SYSTEM] Best model selected: {best_model_name}")
-
-# IMPORTANT: Assign best model to xgb_model variable for compatibility
 xgb_model = trained_models[best_model_name]
 
-# --- ROC CURVE GRAPH ---
-print(" [GRAPH] Generating ROC Curve... (Close window to continue)")
-plt.figure(figsize=(10, 8))
+# --- 5. VISUALIZATIONS (Confusion Matrix & Calibration) ---
+print(" [GRAPH] Generating Visual Reports... (Checking 3 Plots)")
+
+# Plot 1: Confusion Matrix (Best Model)
+fig, ax = plt.subplots(1, 3, figsize=(18, 5))
+
+# Confusion Matrix
+cm = confusion_matrix(y_test, xgb_model.predict(test[cols]))
+disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Team 1 Win', 'Team 2 Win'])
+disp.plot(cmap='Blues', ax=ax[0], colorbar=False)
+ax[0].set_title(f'Confusion Matrix ({best_model_name})')
+
+# Plot 2: ROC Curve
 for name, model in trained_models.items():
     if hasattr(model, "predict_proba"):
         try:
             probs = model.predict_proba(test[cols])[:, 1]
             fpr, tpr, _ = roc_curve(y_test, probs)
             roc_auc = auc(fpr, tpr)
-            lw = 3 if name == best_model_name or "Voting" in name else 1
-            plt.plot(fpr, tpr, lw=lw, label=f'{name} (AUC = {roc_auc:.2f})')
-        except:
-            pass
+            lw = 3 if name == best_model_name else 1
+            ax[1].plot(fpr, tpr, lw=lw, label=f'{name} (AUC={roc_auc:.2f})')
+        except: pass
+ax[1].plot([0, 1], [0, 1], 'k--', lw=2)
+ax[1].set_xlabel('False Positive Rate')
+ax[1].set_ylabel('True Positive Rate')
+ax[1].set_title('ROC Curve')
+ax[1].legend(loc="lower right", fontsize='small')
 
-plt.plot([0, 1], [0, 1], 'k--', lw=2)
-plt.xlabel('False Positive Rate')
-plt.ylabel('True Positive Rate')
-plt.title('Model Performance Benchmark (ROC Curve)')
-plt.legend(loc="lower right")
-plt.grid(alpha=0.3)
+# Plot 3: Calibration Curve (Reliability Diagram)
+# Sadece en iyi 3 modeli çizelim karmaşa olmasın
+top_3_models = df_benchmark.head(3)['Model'].tolist()
+for name in top_3_models:
+    model = trained_models[name]
+    if hasattr(model, "predict_proba"):
+        probs = model.predict_proba(test[cols])[:, 1]
+        fop, mpv = calibration_curve(y_test, probs, n_bins=10, strategy='uniform')
+        ax[2].plot(mpv, fop, marker='.', label=name)
+
+ax[2].plot([0, 1], [0, 1], linestyle='--', color='gray', label='Perfectly Calibrated')
+ax[2].set_xlabel('Mean Predicted Probability')
+ax[2].set_ylabel('Fraction of Positives')
+ax[2].set_title('Calibration Curve (Reliability)')
+ax[2].legend()
+
+plt.tight_layout()
 plt.show()
 
 print(f" [SYSTEM] Saving best model ({best_model_name}) to file...")

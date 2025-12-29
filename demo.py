@@ -1,9 +1,5 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import xgboost as xgb
-from sklearn.metrics import accuracy_score, classification_report
-from sklearn.model_selection import TimeSeriesSplit
 import joblib 
 import warnings
 import sys
@@ -15,7 +11,7 @@ import os
 warnings.simplefilter(action='ignore')
 pd.options.mode.chained_assignment = None
 
-print(" [SYSTEM] CS:GO PREDICTOR V11 DEMO STARTING...")
+print(" [SYSTEM] CS:GO PREDICTOR V13 DEMO (STACKING EDITION) STARTING...")
 
 # =============================================================================
 # 1. DATA LOADING
@@ -61,12 +57,11 @@ df_results['team_2'] = normalize_names(df_results['team_2'])
 df_players['team_name'] = normalize_names(df_players['team_name'])
 
 # =============================================================================
-# 2. FEATURE ENGINEERING
+# 2. FEATURE ENGINEERING (Database Reconstruction)
 # =============================================================================
-print(" [PROCESS] Processing data & engineering features...")
+print(" [PROCESS] Reconstructing historical database & features...")
 
 # --- Pistol Round Analysis ---
-# Merging economy data to determine who won pistol rounds (Round 1 and 16)
 df_eco_m = pd.merge(df_eco, df_results[['match_id', 'date', 'team_1', 'team_2']], on='match_id', how='left')
 df_eco_m.dropna(subset=['date'], inplace=True)
 p_data = []
@@ -84,7 +79,6 @@ for i, r in df_eco_m.iterrows():
 
 if p_data:
     df_p = pd.DataFrame(p_data).sort_values(by=['team', 'date'])
-    # Calculate rolling average of pistol win rate (Last 20 matches)
     df_p['p_wr'] = df_p.groupby('team')['pw'].transform(lambda x: x.rolling(20, min_periods=5).mean().shift(1)).fillna(0.5)
     p_stats = df_p.groupby(['date', 'team'])['p_wr'].mean().reset_index()
 else: p_stats = pd.DataFrame(columns=['date', 'team', 'p_wr'])
@@ -96,7 +90,6 @@ df_results['rank_2'] = pd.to_numeric(df_results['rank_2'], errors='coerce').fill
 tr = {} 
 df_results.sort_values(by='date', inplace=True)
 
-# Custom ELO Algorithm
 def elo(t1, t2, w, k=30):
     r1, r2 = tr.get(t1, 1500), tr.get(t2, 1500)
     e1 = 1/(1+10**((r2-r1)/400)); e2 = 1/(1+10**((r1-r2)/400))
@@ -110,15 +103,12 @@ df_results['t1_elo'] = [x[0] for x in el]; df_results['t2_elo'] = [x[1] for x in
 t1r = df_results[['date','team_1','match_winner']].rename(columns={'team_1':'team'}); t1r['w']=(t1r['match_winner']==1).astype(int)
 t2r = df_results[['date','team_2','match_winner']].rename(columns={'team_2':'team'}); t2r['w']=(t2r['match_winner']==2).astype(int)
 th = pd.concat([t1r, t2r]).sort_values(by=['team','date'])
-# Rolling Win Rate (Last 5 games)
 th['wr'] = th.groupby('team')['w'].transform(lambda x: x.rolling(5, min_periods=1).mean().shift(1)).fillna(0.5)
 t_wr = th.groupby(['date','team'])['wr'].mean().reset_index()
 
-# Player Impact Rating Calculation
 df_players.fillna(0, inplace=True)
 df_players['imp'] = (df_players['kills']*1.2 + df_players['assists']*0.3 + df_players['fkdiff']*0.7 + df_players['kast']*0.05 + df_players['adr']*0.01 - df_players['deaths']*0.5)
 df_players.sort_values(by=['player_name','date'], inplace=True)
-# Rolling average of player impact
 df_players['avg'] = df_players.groupby('player_name')['imp'].transform(lambda x: x.rolling(10, min_periods=1).mean().shift(1)).fillna(0)
 t_stats = df_players.groupby(['match_id','team_name'])['avg'].mean().reset_index()
 
@@ -151,16 +141,18 @@ df = pd.get_dummies(df, columns=['_map'], prefix='map')
 df.columns = df.columns.str.lower()
 
 # =============================================================================
-# 3. MODEL TRAINING (DEMO - NO TRAINING)
+# 3. MODEL LOADING (DEMO MODE)
 # =============================================================================
-print(" [SYSTEM] Loading pre-trained model (Presentation Mode)...")
+print(" [SYSTEM] Loading pre-trained model...")
 
-# Upload the model from file
-if os.path.exists('csgo_v11_model.pkl'):
-    best_model = joblib.load('csgo_v11_model.pkl')
-    print(" [OK] Model successfully loaded: csgo_v11_model.pkl")
+# DİKKAT: V13 Stacking modeli 'csgo_best_model.pkl' olarak kaydedildi.
+model_filename = 'csgo_best_model.pkl' 
+
+if os.path.exists(model_filename):
+    best_model = joblib.load(model_filename)
+    print(f" [OK] Model successfully loaded: {model_filename}")
 else:
-    print(" [ERROR] 'csgo_v11_model.pkl' not found! Please run the training script first.")
+    print(f" [ERROR] '{model_filename}' not found! Please run 'run.py' first.")
     sys.exit()
 
 cols = ['t1_elo', 't2_elo', 'elo_d', 'rank_1', 'rank_2', 'rank_d', 
@@ -173,7 +165,7 @@ cols += map_cols
 display_maps = sorted([c.replace('map_', '').title() for c in map_cols])
 
 # =============================================================================
-# 4. TIME TRAVELER MODE (SAFE & INTERACTIVE)
+# 4. TIME TRAVELER INTERFACE
 # =============================================================================
 full_history = df.sort_values(by='date').copy()
 all_teams = sorted(list(set(full_history['team_1'].unique()) | set(full_history['team_2'].unique())))
@@ -202,17 +194,13 @@ def predict_match_timetravel(t1_name, t2_name, map_name):
     t2 = t2_name.strip().lower().replace(' ', '_')
     sel_map = map_name.strip().lower()
 
-    # Check if teams exist
     if t1 not in all_teams:
         print(f" [ERROR] Team '{t1_name}' not found. Type 'list' to see all teams.")
-        if "navi" in t1: print(" -> Hint: try 'natus_vincere'.")
         return
     if t2 not in all_teams:
         print(f" [ERROR] Team '{t2_name}' not found.")
-        if "navi" in t2: print(" -> Hint: try 'natus_vincere'.")
         return
 
-    # LOGIC: Find the LAST MATCH between these two teams
     mask = ((full_history['team_1'] == t1) & (full_history['team_2'] == t2)) | \
            ((full_history['team_1'] == t2) & (full_history['team_2'] == t1))
     
@@ -220,8 +208,6 @@ def predict_match_timetravel(t1_name, t2_name, map_name):
     
     if matches.empty:
         print(f" [!] These teams have never met in the dataset.")
-        
-        # Fallback: Use their latest individual stats
         t1_hist = full_history[full_history['team_1'] == t1]
         t2_hist = full_history[full_history['team_1'] == t2]
         
@@ -250,14 +236,12 @@ def predict_match_timetravel(t1_name, t2_name, map_name):
         for c in map_cols: features[c] = 0
 
     else:
-        # Match found! Time travel to that date.
         last_match = matches.iloc[-1]
         sim_date = last_match['date'].strftime('%Y-%m-%d')
         
         if last_match['team_1'] == t1:
             input_row = last_match.copy()
         else: 
-            # Swap logic if T1 was on the right side
             input_row = last_match.copy()
             swap_map = {
                 't1_elo': 't2_elo', 't2_elo': 't1_elo',
@@ -275,13 +259,9 @@ def predict_match_timetravel(t1_name, t2_name, map_name):
         real_outcome = f"{real_winner_name.upper()} won."
         features = input_row.to_dict() 
 
-    # Map Configuration
     map_key = f"map_{sel_map}"
-    
-    # Reset all maps to 0
     for c in map_cols: features[c] = 0
     
-    # Set selected map
     if map_key in map_cols:
         features[map_key] = 1
     else:
@@ -291,7 +271,7 @@ def predict_match_timetravel(t1_name, t2_name, map_name):
         sel_map = "mirage"
 
     input_df = pd.DataFrame([features])
-    input_df = input_df[cols] # Ensure column order
+    input_df = input_df[cols] 
     
     # PREDICTION
     prob = best_model.predict_proba(input_df)[0]
@@ -313,7 +293,7 @@ def predict_match_timetravel(t1_name, t2_name, map_name):
     print("-" * 40)
 
 print("\n" + "="*60)
-print("      CS:GO ORACLE V11 (FINAL)      ")
+print("      CS:GO ORACLE V13 (FINAL DEMO)      ")
 print("="*60)
 print("Hint: Type 'list' to see all teams.")
 print("Hint: Type 'maplist' to see all maps.")
@@ -324,12 +304,10 @@ while True:
     
     if t1 == 'q': break
     
-    # --- TEAM LIST ---
     if t1 == 'list': 
         print_teams_paginated()
         continue
         
-    # --- MAP LIST ---
     if t1 == 'maplist':
         print("\n--- AVAILABLE MAPS ---")
         print(", ".join(display_maps))

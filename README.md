@@ -32,7 +32,7 @@
     *(Note: I suggest you to use Python's virtual environment "venv" for pip usage in linux systems.)*
 
 3.  **Authentication Check:**
-    Ensure you have correctly configured your Git Personal Access Token (PAT) for push operations.
+    Ensure you have correctly configured your Git Personal Access Token (PAT) for clone operations.
 
 ## 💻 Usage & Execution
 
