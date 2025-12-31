@@ -535,7 +535,7 @@ def predict_match_timetravel(t1_name, t2_name, map_name):
 
 
 print("\n" + "=" * 60)
-print("      CS:GO ORACLE V12 (BENCHMARK)      ")
+print("      CS:GO ORACLE V13 (SCIENTIFIC)      ")
 print("=" * 60)
 print("Hint: Type 'list' to see all teams.")
 print("Hint: Type 'maplist' to see all maps.")
